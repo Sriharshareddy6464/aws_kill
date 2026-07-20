@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -11,65 +12,97 @@ import (
 
 var listCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all supported AWS services and their scan status",
-	Long:  `Displays a structured list of supported services. If a scan was run, shows a checkmark next to services found in the inventory.`,
+	Short: "List discovered AWS services and their resource counts",
+	Long:  `Displays a structured summary of the infrastructure discovered in the latest scan from reports/status.json.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		inventoryPath := filepath.Join("reports", "inventory.json")
-		foundMap := make(map[string]bool)
+		statusPath := filepath.Join("reports", "status.json")
 
-		var inventory models.Inventory
-		if err := utils.ReadJSON(inventoryPath, &inventory); err == nil {
-			for _, res := range inventory.Resources {
-				foundMap[res.Type] = true
+		var status models.StatusReport
+		err := utils.ReadJSON(statusPath, &status)
+		if err != nil {
+			fmt.Printf("Error: No scan status report found at %s. Please run 'aws-kill scan' first.\n", statusPath)
+			os.Exit(1)
+		}
+
+		fmt.Println("AWS Infrastructure Summary")
+		fmt.Println()
+		fmt.Println("Scan Time")
+		fmt.Println(status.ScanTime)
+		fmt.Println()
+		fmt.Println("------------------------------------------------")
+
+		servicesFound := len(status.Services)
+		resourcesFound := 0
+
+		// Ordered resource keys for pretty printing
+		serviceKeys := map[string][]string{
+			"EC2": {
+				"Instances", "Running Instances", "Stopped Instances", "Elastic IPs", "Volumes",
+				"Snapshots", "Key Pairs", "Security Groups", "Network Interfaces",
+				"Launch Templates", "Placement Groups", "Dedicated Hosts", "Capacity Reservations",
+			},
+			"VPC": {
+				"VPCs", "Subnets", "Route Tables", "Internet Gateways", "NAT Gateways",
+			},
+			"Application Load Balancer": {
+				"Load Balancers", "Target Groups",
+			},
+			"ECS": {
+				"Clusters", "Services", "Task Definitions", "Running Tasks",
+			},
+			"ECR": {
+				"Repositories", "Images",
+			},
+			"RDS": {
+				"DB Instances", "DB Snapshots", "Subnet Groups",
+			},
+			"S3": {
+				"Buckets",
+			},
+			"CloudFront": {
+				"Distributions",
+			},
+		}
+
+		// Helper to check if a key is a duplicate count (which shouldn't add to Resources Found)
+		isDuplicateKey := func(k string) bool {
+			return k == "Running Instances" || k == "Stopped Instances" || k == "Running Tasks" || k == "Images"
+		}
+
+		for _, svc := range status.Services {
+			fmt.Println()
+			fmt.Println(svc.ServiceName)
+			fmt.Println("------------------------------------------------")
+
+			orderedKeys, exists := serviceKeys[svc.ServiceName]
+			if !exists {
+				// Fallback to alphabetical if not defined in order map
+				for k, v := range svc.Counts {
+					fmt.Printf("%-30s(%d)\n", k, v)
+					if !isDuplicateKey(k) {
+						resourcesFound += v
+					}
+				}
+				continue
+			}
+
+			for _, k := range orderedKeys {
+				val, ok := svc.Counts[k]
+				if ok {
+					fmt.Printf("%-30s(%d)\n", k, val)
+					if !isDuplicateKey(k) {
+						resourcesFound += val
+					}
+				}
 			}
 		}
 
-		check := func(serviceType string) string {
-			if foundMap[serviceType] {
-				return "✓"
-			}
-			return " "
-		}
-
-		fmt.Println("AWS Kill Switch - Supported Services")
 		fmt.Println()
-		fmt.Println("Compute")
-		fmt.Println("--------")
-		fmt.Printf("%s EC2 Instances\n", check("EC2 Instances"))
+		fmt.Println("------------------------------------------------")
+		fmt.Println("SUMMARY")
 		fmt.Println()
-		fmt.Println("Networking")
-		fmt.Println("-----------")
-		fmt.Printf("%s VPC\n", check("VPC"))
-		fmt.Printf("%s Subnets\n", check("Subnets"))
-		fmt.Printf("%s Security Groups\n", check("Security Groups"))
-		fmt.Printf("%s Route Tables\n", check("Route Tables"))
-		fmt.Printf("%s Internet Gateway\n", check("Internet Gateway"))
-		fmt.Printf("%s NAT Gateway\n", check("NAT Gateway"))
-		fmt.Printf("%s Elastic IP\n", check("Elastic IP"))
-		fmt.Println()
-		fmt.Println("Load Balancing")
-		fmt.Println("--------------")
-		fmt.Printf("%s Application Load Balancer\n", check("Application Load Balancer"))
-		fmt.Printf("%s Target Groups\n", check("Target Groups"))
-		fmt.Println()
-		fmt.Println("Containers")
-		fmt.Println("----------")
-		fmt.Printf("%s ECS\n", check("ECS"))
-		fmt.Printf("%s ECR\n", check("ECR"))
-		fmt.Println()
-		fmt.Println("Storage")
-		fmt.Println("--------")
-		fmt.Printf("%s S3\n", check("S3"))
-		fmt.Println()
-		fmt.Println("Database")
-		fmt.Println("--------")
-		fmt.Printf("%s RDS\n", check("RDS"))
-		fmt.Println()
-		fmt.Println("CDN")
-		fmt.Println("---")
-		fmt.Printf("%s CloudFront\n", check("CloudFront"))
-		fmt.Println()
-		fmt.Println("Total Supported Services : 15")
+		fmt.Printf("%-30s: %d\n", "Services Found", servicesFound)
+		fmt.Printf("%-30s: %d\n", "Resources Found", resourcesFound)
 	},
 }
 
