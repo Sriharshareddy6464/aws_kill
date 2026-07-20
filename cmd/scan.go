@@ -6,6 +6,10 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"github.com/Sriharshareddy6464/aws-kill/aws"
+	"github.com/Sriharshareddy6464/aws-kill/engine"
+	"github.com/Sriharshareddy6464/aws-kill/utils"
 )
 
 var scanCmd = &cobra.Command{
@@ -18,12 +22,39 @@ var scanCmd = &cobra.Command{
 		// Reset downstream files to maintain sequence integrity
 		cleanupDownstream()
 
-		// Placeholders for actual scan logic invocation
-		// inventory, err := engine.Scan(context.Background(), filter)
-		// ...
+		// Get flags from Viper
+		prof := viper.GetString("profile")
+		reg := viper.GetString("region")
+		tagFilter := viper.GetString("tag")
 
-		// Write placeholder success output
-		fmt.Println("Scan completed. Inventory saved to reports/inventory.json.")
+		// Initialize AWS Session config
+		awsCfg, err := aws.NewSession(cmd.Context(), aws.Config{
+			Profile: prof,
+			Region:  reg,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to initialize AWS config: %w", err)
+		}
+
+		// Initialize and run Scanner
+		scanner := engine.NewScanner(awsCfg)
+		inventory, err := scanner.Scan(cmd.Context(), tagFilter)
+		if err != nil {
+			return fmt.Errorf("failed during AWS scan: %w", err)
+		}
+
+		// Ensure reports directory exists
+		if err := os.MkdirAll("reports", 0755); err != nil {
+			return fmt.Errorf("failed to create reports directory: %w", err)
+		}
+
+		// Write inventory report
+		inventoryPath := filepath.Join("reports", "inventory.json")
+		if err := utils.WriteJSON(inventoryPath, inventory); err != nil {
+			return fmt.Errorf("failed to write inventory JSON: %w", err)
+		}
+
+		fmt.Printf("Scan completed. Inventory saved to %s.\n", inventoryPath)
 		return nil
 	},
 }

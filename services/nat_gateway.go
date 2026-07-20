@@ -2,14 +2,57 @@ package services
 
 import (
 	"context"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/Sriharshareddy6464/aws-kill/models"
 )
 
-type NATGatewayService struct{}
+type NATGatewayService struct {
+	Client *ec2.Client
+}
 
-func NewNATGatewayService() *NATGatewayService {
-	return &NATGatewayService{}
+func NewNATGatewayService(client *ec2.Client) *NATGatewayService {
+	return &NATGatewayService{Client: client}
+}
+
+func (s *NATGatewayService) Scan(ctx context.Context, tagFilter string) ([]models.Resource, error) {
+	var resources []models.Resource
+	input := &ec2.DescribeNatGatewaysInput{}
+	result, err := s.Client.DescribeNatGateways(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, ngw := range result.NatGateways {
+		// Skip deleted/deleting NAT Gateways
+		if ngw.State == "deleted" || ngw.State == "deleting" {
+			continue
+		}
+
+		tags := make(map[string]string)
+		for _, t := range ngw.Tags {
+			tags[*t.Key] = *t.Value
+		}
+
+		var deps []string
+		if ngw.SubnetId != nil {
+			deps = append(deps, *ngw.SubnetId)
+		}
+
+		resources = append(resources, models.Resource{
+			ID:           *ngw.NatGatewayId,
+			Name:         tags["Name"],
+			Type:         "NAT Gateway",
+			Region:       "",
+			Dependencies: deps,
+			Tags:         tags,
+		})
+	}
+	return resources, nil
 }
 
 func (s *NATGatewayService) Delete(ctx context.Context, id string) error {
-	return nil
+	_, err := s.Client.DeleteNatGateway(ctx, &ec2.DeleteNatGatewayInput{
+		NatGatewayId: &id,
+	})
+	return err
 }

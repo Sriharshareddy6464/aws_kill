@@ -2,14 +2,71 @@ package services
 
 import (
 	"context"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/Sriharshareddy6464/aws-kill/models"
 )
 
-type InternetGatewayService struct{}
+type InternetGatewayService struct {
+	Client *ec2.Client
+}
 
-func NewInternetGatewayService() *InternetGatewayService {
-	return &InternetGatewayService{}
+func NewInternetGatewayService(client *ec2.Client) *InternetGatewayService {
+	return &InternetGatewayService{Client: client}
+}
+
+func (s *InternetGatewayService) Scan(ctx context.Context, tagFilter string) ([]models.Resource, error) {
+	var resources []models.Resource
+	input := &ec2.DescribeInternetGatewaysInput{}
+	result, err := s.Client.DescribeInternetGateways(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, igw := range result.InternetGateways {
+		// Only track if it has a VPC attachment (which is a dependency)
+		var deps []string
+		for _, att := range igw.Attachments {
+			if att.VpcId != nil {
+				deps = append(deps, *att.VpcId)
+			}
+		}
+
+		tags := make(map[string]string)
+		for _, t := range igw.Tags {
+			tags[*t.Key] = *t.Value
+		}
+
+		resources = append(resources, models.Resource{
+			ID:           *igw.InternetGatewayId,
+			Name:         tags["Name"],
+			Type:         "Internet Gateway",
+			Region:       "",
+			Dependencies: deps,
+			Tags:         tags,
+		})
+	}
+	return resources, nil
 }
 
 func (s *InternetGatewayService) Delete(ctx context.Context, id string) error {
-	return nil
+	// Need to detach first from VPC before deleting
+	input := &ec2.DescribeInternetGatewaysInput{
+		InternetGatewayIds: []string{id},
+	}
+	res, err := s.Client.DescribeInternetGateways(ctx, input)
+	if err == nil && len(res.InternetGateways) > 0 {
+		for _, att := range res.InternetGateways[0].Attachments {
+			if att.VpcId != nil {
+				s.Client.DetachInternetGateway(ctx, &ec2.DetachInternetGatewayInput{
+					InternetGatewayId: &id,
+					VpcId:             att.VpcId,
+				})
+			}
+		}
+	}
+
+	_, err = s.Client.DeleteInternetGateway(ctx, &ec2.DeleteInternetGatewayInput{
+		InternetGatewayId: &id,
+	})
+	return err
 }
