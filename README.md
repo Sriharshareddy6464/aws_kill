@@ -58,4 +58,8 @@ go build -o aws-kill
 
 # 4. Verify everything was removed
 ./aws-kill verify
+
+# Helper: List all supported AWS service types
+./aws-kill list
+
 ```

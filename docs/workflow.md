@@ -46,3 +46,12 @@ Each command contains validation guards to prevent executing tasks out of order:
 *   **Failure Behavior**: Aborts with code `1` and outputs:
     `Error: No kill execution state found at reports/result.json. Please run 'aws-kill kill' first.`
 *   Queries AWS one final time to confirm deletions and writes `reports/verification.json`.
+
+---
+
+## 3. Helper Commands
+
+### `aws-kill list`
+*   **Action**: Prints a structured view of all 15 supported AWS resources categorized by service domain (Compute, Networking, Load Balancing, Containers, Storage, Database, CDN).
+*   **State Constraints**: None. This command can be executed at any time to inspect capability support.
+
