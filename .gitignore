@@ -24,4 +24,4 @@ Thumbs.db
 
 # Reports (generated during execution)
 reports/*.json
-!reports/.gitkeep
+!reports/.gitkeepgit status
