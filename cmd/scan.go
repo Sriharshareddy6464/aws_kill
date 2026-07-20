@@ -15,7 +15,7 @@ import (
 var scanCmd = &cobra.Command{
 	Use:   "scan",
 	Short: "Scan target AWS environment for active resources",
-	Long:  `Discovers supported AWS resources in the specified account and region, saving them to reports/inventory.json.`,
+	Long:  `Discovers supported AWS resources in the specified account and region, saving them to reports/inventory.json and reports/status.json.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("Starting AWS infrastructure scan...")
 
@@ -38,7 +38,7 @@ var scanCmd = &cobra.Command{
 
 		// Initialize and run Scanner
 		scanner := engine.NewScanner(awsCfg)
-		inventory, err := scanner.Scan(cmd.Context(), tagFilter)
+		inventory, statusReport, err := scanner.Scan(cmd.Context(), tagFilter)
 		if err != nil {
 			return fmt.Errorf("failed during AWS scan: %w", err)
 		}
@@ -54,7 +54,13 @@ var scanCmd = &cobra.Command{
 			return fmt.Errorf("failed to write inventory JSON: %w", err)
 		}
 
-		fmt.Printf("Scan completed. Inventory saved to %s.\n", inventoryPath)
+		// Write status report
+		statusPath := filepath.Join("reports", "status.json")
+		if err := utils.WriteJSON(statusPath, statusReport); err != nil {
+			return fmt.Errorf("failed to write status JSON: %w", err)
+		}
+
+		fmt.Printf("Scan completed. Inventory saved to %s, status saved to %s.\n", inventoryPath, statusPath)
 		return nil
 	},
 }
@@ -65,6 +71,7 @@ func init() {
 
 func cleanupDownstream() {
 	files := []string{
+		filepath.Join("reports", "status.json"),
 		filepath.Join("reports", "plan.json"),
 		filepath.Join("reports", "result.json"),
 		filepath.Join("reports", "verification.json"),

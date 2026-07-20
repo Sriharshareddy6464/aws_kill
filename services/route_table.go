@@ -14,16 +14,16 @@ func NewRouteTableService(client *ec2.Client) *RouteTableService {
 	return &RouteTableService{Client: client}
 }
 
-func (s *RouteTableService) Scan(ctx context.Context, tagFilter string) ([]models.Resource, error) {
+func (s *RouteTableService) Scan(ctx context.Context, tagFilter string) ([]models.Resource, map[string]int, error) {
 	var resources []models.Resource
+	counts := map[string]int{"Route Tables": 0}
 	input := &ec2.DescribeRouteTablesInput{}
 	result, err := s.Client.DescribeRouteTables(ctx, input)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	for _, rt := range result.RouteTables {
-		// Skip main route tables since they are managed by VPC lifecycle
 		isMain := false
 		for _, assoc := range rt.Associations {
 			if assoc.Main != nil && *assoc.Main {
@@ -35,6 +35,7 @@ func (s *RouteTableService) Scan(ctx context.Context, tagFilter string) ([]model
 			continue
 		}
 
+		counts["Route Tables"]++
 		tags := make(map[string]string)
 		for _, t := range rt.Tags {
 			tags[*t.Key] = *t.Value
@@ -49,7 +50,7 @@ func (s *RouteTableService) Scan(ctx context.Context, tagFilter string) ([]model
 			Tags:         tags,
 		})
 	}
-	return resources, nil
+	return resources, counts, nil
 }
 
 func (s *RouteTableService) Delete(ctx context.Context, id string) error {

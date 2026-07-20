@@ -14,24 +14,26 @@ func NewALBService(client *elasticloadbalancingv2.Client) *ALBService {
 	return &ALBService{Client: client}
 }
 
-func (s *ALBService) Scan(ctx context.Context, tagFilter string) ([]models.Resource, error) {
+func (s *ALBService) Scan(ctx context.Context, tagFilter string) ([]models.Resource, map[string]int, error) {
 	var resources []models.Resource
+	counts := map[string]int{"Load Balancers": 0}
 	input := &elasticloadbalancingv2.DescribeLoadBalancersInput{}
 	result, err := s.Client.DescribeLoadBalancers(ctx, input)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	for _, lb := range result.LoadBalancers {
+		counts["Load Balancers"]++
 		resources = append(resources, models.Resource{
 			ID:     *lb.LoadBalancerArn,
 			Name:   *lb.LoadBalancerName,
 			Type:   "Application Load Balancer",
 			Region: "",
-			Tags:   nil, // Tags require separate API call, skipped for simplicity in MVP
+			Tags:   nil,
 		})
 	}
-	return resources, nil
+	return resources, counts, nil
 }
 
 func (s *ALBService) Delete(ctx context.Context, id string) error {

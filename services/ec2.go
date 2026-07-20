@@ -2,8 +2,11 @@ package services
 
 import (
 	"context"
+	"log/slog"
+
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/Sriharshareddy6464/aws-kill/models"
+	"github.com/Sriharshareddy6464/aws-kill/utils"
 )
 
 type EC2Service struct {
@@ -14,39 +17,172 @@ func NewEC2Service(client *ec2.Client) *EC2Service {
 	return &EC2Service{Client: client}
 }
 
-func (s *EC2Service) Scan(ctx context.Context, tagFilter string) ([]models.Resource, error) {
+func (s *EC2Service) Scan(ctx context.Context, tagFilter string) ([]models.Resource, map[string]int, error) {
 	var resources []models.Resource
-	input := &ec2.DescribeInstancesInput{}
-	result, err := s.Client.DescribeInstances(ctx, input)
-	if err != nil {
-		return nil, err
+	counts := map[string]int{
+		"Instances":             0,
+		"Running Instances":     0,
+		"Stopped Instances":     0,
+		"Volumes":               0,
+		"Snapshots":             0,
+		"Key Pairs":             0,
+		"Launch Templates":      0,
+		"Placement Groups":      0,
+		"Dedicated Hosts":       0,
+		"Capacity Reservations": 0,
+		"Network Interfaces":    0,
 	}
 
-	for _, reservation := range result.Reservations {
-		for _, inst := range reservation.Instances {
-			// Skip terminated instances
-			if inst.State != nil && inst.State.Name == "terminated" {
-				continue
-			}
+	// 1. Describe Instances
+	instResult, err := s.Client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{})
+	if err == nil {
+		for _, reservation := range instResult.Reservations {
+			for _, inst := range reservation.Instances {
+				if inst.State != nil && inst.State.Name == "terminated" {
+					continue
+				}
 
+				counts["Instances"]++
+				stateName := string(inst.State.Name)
+				if stateName == "running" {
+					counts["Running Instances"]++
+				} else if stateName == "stopped" {
+					counts["Stopped Instances"]++
+				}
+
+				tags := make(map[string]string)
+				for _, t := range inst.Tags {
+					tags[*t.Key] = *t.Value
+				}
+
+				resources = append(resources, models.Resource{
+					ID:    *inst.InstanceId,
+					Name:  tags["Name"],
+					Type:  "EC2 Instances",
+					State: stateName,
+					Tags:  tags,
+				})
+			}
+		}
+	} else {
+		utils.Logger.Warn("Skipped EC2 Instances describe", slog.Any("error", err))
+	}
+
+	// 2. Volumes
+	if volResult, err := s.Client.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{}); err == nil {
+		counts["Volumes"] = len(volResult.Volumes)
+		for _, vol := range volResult.Volumes {
 			tags := make(map[string]string)
-			for _, t := range inst.Tags {
+			for _, t := range vol.Tags {
 				tags[*t.Key] = *t.Value
 			}
-
-			// Add filter check here if needed
-			// ...
-
 			resources = append(resources, models.Resource{
-				ID:     *inst.InstanceId,
-				Name:   tags["Name"],
-				Type:   "EC2 Instances",
-				Region: "", // Filled in by caller
-				Tags:   tags,
+				ID:    *vol.VolumeId,
+				Name:  tags["Name"],
+				Type:  "Volume",
+				State: string(vol.State),
+				Tags:  tags,
 			})
 		}
+	} else {
+		utils.Logger.Warn("Skipped EC2 Volumes describe", slog.Any("error", err))
 	}
-	return resources, nil
+
+	// 3. Snapshots (OwnerId self to avoid millions of public ones)
+	if snapResult, err := s.Client.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{OwnerIds: []string{"self"}}); err == nil {
+		counts["Snapshots"] = len(snapResult.Snapshots)
+		for _, snap := range snapResult.Snapshots {
+			resources = append(resources, models.Resource{
+				ID:   *snap.SnapshotId,
+				Type: "Snapshot",
+			})
+		}
+	} else {
+		utils.Logger.Warn("Skipped EC2 Snapshots describe", slog.Any("error", err))
+	}
+
+	// 4. Key Pairs
+	if kpResult, err := s.Client.DescribeKeyPairs(ctx, &ec2.DescribeKeyPairsInput{}); err == nil {
+		counts["Key Pairs"] = len(kpResult.KeyPairs)
+		for _, kp := range kpResult.KeyPairs {
+			resources = append(resources, models.Resource{
+				ID:   *kp.KeyPairId,
+				Name: *kp.KeyName,
+				Type: "KeyPair",
+			})
+		}
+	} else {
+		utils.Logger.Warn("Skipped EC2 Key Pairs describe", slog.Any("error", err))
+	}
+
+	// 5. Launch Templates
+	if ltResult, err := s.Client.DescribeLaunchTemplates(ctx, &ec2.DescribeLaunchTemplatesInput{}); err == nil {
+		counts["Launch Templates"] = len(ltResult.LaunchTemplates)
+		for _, lt := range ltResult.LaunchTemplates {
+			resources = append(resources, models.Resource{
+				ID:   *lt.LaunchTemplateId,
+				Name: *lt.LaunchTemplateName,
+				Type: "LaunchTemplate",
+			})
+		}
+	} else {
+		utils.Logger.Warn("Skipped EC2 Launch Templates describe", slog.Any("error", err))
+	}
+
+	// 6. Placement Groups
+	if pgResult, err := s.Client.DescribePlacementGroups(ctx, &ec2.DescribePlacementGroupsInput{}); err == nil {
+		counts["Placement Groups"] = len(pgResult.PlacementGroups)
+		for _, pg := range pgResult.PlacementGroups {
+			resources = append(resources, models.Resource{
+				ID:   *pg.GroupId,
+				Name: *pg.GroupName,
+				Type: "PlacementGroup",
+			})
+		}
+	} else {
+		utils.Logger.Warn("Skipped Placement Groups describe", slog.Any("error", err))
+	}
+
+	// 7. Dedicated Hosts
+	if hostResult, err := s.Client.DescribeHosts(ctx, &ec2.DescribeHostsInput{}); err == nil {
+		counts["Dedicated Hosts"] = len(hostResult.Hosts)
+		for _, host := range hostResult.Hosts {
+			resources = append(resources, models.Resource{
+				ID:   *host.HostId,
+				Type: "DedicatedHost",
+			})
+		}
+	} else {
+		utils.Logger.Warn("Skipped Dedicated Hosts describe", slog.Any("error", err))
+	}
+
+	// 8. Capacity Reservations
+	if crResult, err := s.Client.DescribeCapacityReservations(ctx, &ec2.DescribeCapacityReservationsInput{}); err == nil {
+		counts["Capacity Reservations"] = len(crResult.CapacityReservations)
+		for _, cr := range crResult.CapacityReservations {
+			resources = append(resources, models.Resource{
+				ID:   *cr.CapacityReservationId,
+				Type: "CapacityReservation",
+			})
+		}
+	} else {
+		utils.Logger.Warn("Skipped Capacity Reservations describe", slog.Any("error", err))
+	}
+
+	// 9. Network Interfaces (ENIs)
+	if eniResult, err := s.Client.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{}); err == nil {
+		counts["Network Interfaces"] = len(eniResult.NetworkInterfaces)
+		for _, eni := range eniResult.NetworkInterfaces {
+			resources = append(resources, models.Resource{
+				ID:   *eni.NetworkInterfaceId,
+				Type: "NetworkInterface",
+			})
+		}
+	} else {
+		utils.Logger.Warn("Skipped Network Interfaces describe", slog.Any("error", err))
+	}
+
+	return resources, counts, nil
 }
 
 func (s *EC2Service) Delete(ctx context.Context, id string) error {

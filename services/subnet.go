@@ -14,20 +14,21 @@ func NewSubnetService(client *ec2.Client) *SubnetService {
 	return &SubnetService{Client: client}
 }
 
-func (s *SubnetService) Scan(ctx context.Context, tagFilter string) ([]models.Resource, error) {
+func (s *SubnetService) Scan(ctx context.Context, tagFilter string) ([]models.Resource, map[string]int, error) {
 	var resources []models.Resource
+	counts := map[string]int{"Subnets": 0}
 	input := &ec2.DescribeSubnetsInput{}
 	result, err := s.Client.DescribeSubnets(ctx, input)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	for _, sub := range result.Subnets {
-		// Skip default subnet's VPC parent subnets if needed, or scan all
 		if sub.DefaultForAz != nil && *sub.DefaultForAz {
 			continue
 		}
 
+		counts["Subnets"]++
 		tags := make(map[string]string)
 		for _, t := range sub.Tags {
 			tags[*t.Key] = *t.Value
@@ -42,7 +43,7 @@ func (s *SubnetService) Scan(ctx context.Context, tagFilter string) ([]models.Re
 			Tags:         tags,
 		})
 	}
-	return resources, nil
+	return resources, counts, nil
 }
 
 func (s *SubnetService) Delete(ctx context.Context, id string) error {

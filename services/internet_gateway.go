@@ -14,16 +14,17 @@ func NewInternetGatewayService(client *ec2.Client) *InternetGatewayService {
 	return &InternetGatewayService{Client: client}
 }
 
-func (s *InternetGatewayService) Scan(ctx context.Context, tagFilter string) ([]models.Resource, error) {
+func (s *InternetGatewayService) Scan(ctx context.Context, tagFilter string) ([]models.Resource, map[string]int, error) {
 	var resources []models.Resource
+	counts := map[string]int{"Internet Gateways": 0}
 	input := &ec2.DescribeInternetGatewaysInput{}
 	result, err := s.Client.DescribeInternetGateways(ctx, input)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	for _, igw := range result.InternetGateways {
-		// Only track if it has a VPC attachment (which is a dependency)
+		counts["Internet Gateways"]++
 		var deps []string
 		for _, att := range igw.Attachments {
 			if att.VpcId != nil {
@@ -45,11 +46,10 @@ func (s *InternetGatewayService) Scan(ctx context.Context, tagFilter string) ([]
 			Tags:         tags,
 		})
 	}
-	return resources, nil
+	return resources, counts, nil
 }
 
 func (s *InternetGatewayService) Delete(ctx context.Context, id string) error {
-	// Need to detach first from VPC before deleting
 	input := &ec2.DescribeInternetGatewaysInput{
 		InternetGatewayIds: []string{id},
 	}
